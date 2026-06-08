@@ -145,6 +145,12 @@ button:disabled {
   color: #adc8ef;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .recommendation-list {
   display: grid;
   gap: 10px;
@@ -180,11 +186,47 @@ input:disabled {
   margin-bottom: 14px;
 }
 
+.metrics-group-title {
+  grid-column: 1 / -1;
+  margin: 6px 0 2px;
+  font-size: 0.82rem;
+  color: #9cc3f6;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.metrics-group-costs {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(124, 163, 217, 0.28);
+}
+
+.metrics-subgroup-title {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(124, 163, 217, 0.22);
+}
+
 .metrics article {
   border: 1px solid #355172;
   border-radius: 12px;
   padding: 10px;
   background: #12233f;
+}
+
+.metrics article.metric-highlight {
+  border-color: #0ec5a2;
+  background: linear-gradient(160deg, rgba(14, 197, 162, 0.16) 0%, rgba(18, 35, 63, 0.94) 55%);
+  box-shadow: 0 0 0 1px rgba(14, 197, 162, 0.2), 0 8px 18px rgba(8, 18, 33, 0.28);
+}
+
+.metrics article.metric-highlight h3 {
+  color: #bdf6e8;
+}
+
+.metrics article.metric-highlight p {
+  color: #f4fffb;
+  font-weight: 700;
 }
 
 .metrics h3 {
@@ -193,6 +235,26 @@ input:disabled {
   color: #99b9e6;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.metric-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metric-tooltip {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(156, 195, 246, 0.6);
+  color: #d6e9ff;
+  font-size: 0.66rem;
+  line-height: 1;
+  cursor: help;
 }
 
 .metrics p {

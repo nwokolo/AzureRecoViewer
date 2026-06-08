@@ -36,6 +36,10 @@ type RecommendationDetail = {
   savingsAmount?: number;
   savingsPercentage?: number;
   averageUtilizationPercentage?: number;
+  benefitCost?: number;
+  overageCost?: number;
+  wastageCost?: number;
+  coveragePercentage?: number;
 };
 
 type ChartPoint = {
@@ -53,12 +57,55 @@ type Recommendation = {
   term?: string;
   lookBackPeriod?: string;
   currencyCode?: string;
+  totalHours?: number;
+  costWithoutBenefit?: number;
   recommendationDetails?: RecommendationDetail;
   allRecommendationDetails?: RecommendationDetail[];
   chartSeries: ChartPoint[];
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+
+const TERM_DAYS: Record<Term, number> = {
+  P1Y: 365,
+  P3Y: 365 * 3,
+};
+
+function formatCurrency(amount: number, currencyCode?: string, fractionDigits = 2): string {
+  if (!currencyCode) {
+    return amount.toFixed(fractionDigits);
+  }
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: currencyCode,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    }).format(amount);
+  } catch {
+    return amount.toFixed(fractionDigits);
+  }
+}
+
+function formatRecommendationSkuLabel(armSkuName?: string): string {
+  if (!armSkuName) {
+    return "Unknown SKU";
+  }
+
+  return armSkuName.replace(/_Savings_Plan$/i, "").replace(/_/g, " ").trim();
+}
+
+function MetricTitle({ label, tooltip }: { label: string; tooltip: string }) {
+  return (
+    <span className="metric-title-row">
+      <span>{label}</span>
+      <span className="metric-tooltip" title={tooltip} aria-label={`${label} formula`}>
+        i
+      </span>
+    </span>
+  );
+}
 
 function App() {
   const [signedInUser, setSignedInUser] = useState("");
@@ -81,6 +128,7 @@ function App() {
   const [benefitScope, setBenefitScope] = useState<BenefitScope>("Shared");
 
   const [selectedRecommendation, setSelectedRecommendation] = useState<Recommendation | null>(null);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [hasEvaluatedFilters, setHasEvaluatedFilters] = useState(false);
@@ -168,7 +216,32 @@ function App() {
     setSelectedSingleSubscriptionId("");
     setSelectedSingleResourceGroup("");
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
+  }
+
+  function downloadRecommendationsJson(): void {
+    if (recommendations.length === 0) {
+      return;
+    }
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      count: recommendations.length,
+      recommendations,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "recommendations.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function loadBillingAccounts() {
@@ -285,6 +358,7 @@ function App() {
         return savingsB - savingsA;
       });
 
+      setRecommendations(ranked);
       setSelectedRecommendation(ranked[0] ?? null);
       setHasEvaluatedFilters(true);
     } catch (requestError) {
@@ -293,6 +367,7 @@ function App() {
       } else {
         setError("Failed to load recommendations.");
       }
+      setRecommendations([]);
       setSelectedRecommendation(null);
       setHasEvaluatedFilters(true);
     } finally {
@@ -311,6 +386,7 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -324,6 +400,7 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -336,6 +413,7 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -345,6 +423,7 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -359,6 +438,7 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -367,12 +447,14 @@ function App() {
     setSelectedSingleResourceGroup("");
     setResourceGroups([]);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
   function onSingleResourceGroupChange(nextValue: string): void {
     setSelectedSingleResourceGroup(nextValue);
     setHasEvaluatedFilters(false);
+    setRecommendations([]);
     setSelectedRecommendation(null);
   }
 
@@ -491,16 +573,49 @@ function App() {
   }, [selectedRecommendation]);
 
   const recommendedCommitment = Number(selectedRecommendation?.recommendationDetails?.commitmentAmount ?? 0);
+  const recommendationDetails = selectedRecommendation?.recommendationDetails;
+  const recommendationTerm = (selectedRecommendation?.term as Term | undefined) ?? term;
+  const termDays = TERM_DAYS[recommendationTerm] ?? TERM_DAYS.P1Y;
+  const totalHours = Math.max(Number(selectedRecommendation?.totalHours ?? selectedRecommendation?.chartSeries.length ?? 1), 1);
+  const forecastScale = termDays / totalHours;
+  const forecastedOnDemandCostWithoutPlan = Number(selectedRecommendation?.costWithoutBenefit ?? 0) * forecastScale;
+  const forecastedApiSavings = Number(recommendationDetails?.savingsAmount ?? 0) * forecastScale;
+  const forecastedExpectedCostWithSavingsPlan = Math.max(
+    forecastedOnDemandCostWithoutPlan - forecastedApiSavings,
+    0,
+  );
+  const forecastedSavingsPlanCost = Number(recommendationDetails?.benefitCost ?? 0) * forecastScale;
+  const forecastedOnDemandCostWithPlan = Number(recommendationDetails?.overageCost ?? 0) * forecastScale;
+  const forecastedUnusedSavingsPlan = Number(recommendationDetails?.wastageCost ?? 0) * forecastScale;
+  const recommendationCurrency = selectedRecommendation?.currencyCode ?? "";
+  const formattedRecommendedCommitment = formatCurrency(
+    recommendedCommitment,
+    recommendationCurrency,
+    4,
+  );
+  const costsWithoutSavingsTooltip =
+    "Formula: (costWithoutBenefit / totalHours) * termDays";
+  const savingsPlanCostsTooltip =
+    "Formula: (benefitCost / totalHours) * termDays";
+  const onDemandWithSavingsTooltip =
+    "Formula: (overageCost / totalHours) * termDays";
+  const totalCostTooltip =
+    "Formula: costsWithoutSavingsPlan - forecastedSavings";
+  const forecastedSavingsTooltip =
+    "Formula: (savingsAmount / totalHours) * termDays";
+  const unusedSavingsTooltip =
+    "Formula: (wastageCost / totalHours) * termDays";
+  const savingsPercentTooltip =
+    "Derived from recommendationDetails.savingsPercentage";
+  const utilizationPercentTooltip =
+    "Derived from recommendationDetails.averageUtilizationPercentage";
+  const coveragePercentTooltip =
+    "Derived from recommendationDetails.coveragePercentage";
 
   return (
     <div className="page">
       <header className="hero">
-        <p className="eyebrow">Azure Cost Management Explorer</p>
-        <h1>Commitment Recommendation Viewer</h1>
-        <p>
-          Select a billing scope, filter recommendations by term and lookback, then overlay the
-          selected commitment on hourly usage cost.
-        </p>
+        <h1>Savings Plan Recommendations Explorer</h1>
       </header>
 
       <section className="panel">
@@ -685,17 +800,20 @@ function App() {
           <section className="panel list-panel">
             <div className="section-head">
               <h2>Recommendation</h2>
-              <span>{loadingRecommendations ? "Refreshing..." : "1 available"}</span>
+              <div className="section-actions">
+                <button
+                  type="button"
+                  onClick={downloadRecommendationsJson}
+                  disabled={recommendations.length === 0}
+                >
+                  Download JSON
+                </button>
+              </div>
             </div>
             <div className="recommendation active">
-              <strong>{selectedRecommendation.armSkuName ?? "Unknown SKU"}</strong>
-              <span>{selectedRecommendation.kind ?? "Unknown kind"}</span>
+              <strong>{formatRecommendationSkuLabel(selectedRecommendation.armSkuName)}</strong>
               <span>
-                Savings: {selectedRecommendation.recommendationDetails?.savingsAmount?.toFixed(2) ?? "0.00"}{" "}
-                {selectedRecommendation.currencyCode ?? ""}
-              </span>
-              <span>
-                Recommended Commitment/hr: {selectedRecommendation.recommendationDetails?.commitmentAmount?.toFixed(4) ?? "0.0000"}
+                Recommended Commitment/hr: {formattedRecommendedCommitment}
               </span>
             </div>
           </section>
@@ -703,17 +821,65 @@ function App() {
           <section className="panel chart-panel">
             <h2>Current Hourly Spend vs Recommended Hourly Commitment</h2>
             <div className="metrics">
+              <h3 className="metrics-group-title">Costs</h3>
               <article>
-                <h3>Recommended Commitment/hr</h3>
-                <p>{recommendedCommitment.toFixed(4)}</p>
+                <h3>
+                  <MetricTitle label="Costs without Savings Plan" tooltip={costsWithoutSavingsTooltip} />
+                </h3>
+                <p>{formatCurrency(forecastedOnDemandCostWithoutPlan, recommendationCurrency, 2)}</p>
               </article>
               <article>
-                <h3>Savings %</h3>
-                <p>{selectedRecommendation.recommendationDetails?.savingsPercentage?.toFixed(2) ?? "0.00"}%</p>
+                <h3>
+                  <MetricTitle label="Forecasted Savings Plan Costs" tooltip={savingsPlanCostsTooltip} />
+                </h3>
+                <p>{formatCurrency(forecastedSavingsPlanCost, recommendationCurrency, 2)}</p>
               </article>
               <article>
-                <h3>Utilization %</h3>
-                <p>{selectedRecommendation.recommendationDetails?.averageUtilizationPercentage?.toFixed(2) ?? "0.00"}%</p>
+                <h3>
+                  <MetricTitle
+                    label="Forecasted On-demand Costs (with Savings Plan)"
+                    tooltip={onDemandWithSavingsTooltip}
+                  />
+                </h3>
+                <p>{formatCurrency(forecastedOnDemandCostWithPlan, recommendationCurrency, 2)}</p>
+              </article>
+              <article>
+                <h3>
+                  <MetricTitle label="Forecasted Total Cost" tooltip={totalCostTooltip} />
+                </h3>
+                <p>{formatCurrency(forecastedExpectedCostWithSavingsPlan, recommendationCurrency, 2)}</p>
+              </article>
+              <article className="metric-highlight">
+                <h3>
+                  <MetricTitle label="Forecasted Savings" tooltip={forecastedSavingsTooltip} />
+                </h3>
+                <p>{formatCurrency(forecastedApiSavings, recommendationCurrency, 2)}</p>
+              </article>
+              <h3 className="metrics-group-title metrics-subgroup-title">Waste</h3>
+              <article>
+                <h3>
+                  <MetricTitle label="Forecasted Unused Savings Plan" tooltip={unusedSavingsTooltip} />
+                </h3>
+                <p>{formatCurrency(forecastedUnusedSavingsPlan, recommendationCurrency, 2)}</p>
+              </article>
+              <h3 className="metrics-group-title metrics-group-costs">Percentages</h3>
+              <article className="metric-highlight">
+                <h3>
+                  <MetricTitle label="Forecasted Savings %" tooltip={savingsPercentTooltip} />
+                </h3>
+                <p>{recommendationDetails?.savingsPercentage?.toFixed(2) ?? "0.00"}%</p>
+              </article>
+              <article className="metric-highlight">
+                <h3>
+                  <MetricTitle label="Forecasted Utilization %" tooltip={utilizationPercentTooltip} />
+                </h3>
+                <p>{recommendationDetails?.averageUtilizationPercentage?.toFixed(2) ?? "0.00"}%</p>
+              </article>
+              <article>
+                <h3>
+                  <MetricTitle label="Forecasted Coverage %" tooltip={coveragePercentTooltip} />
+                </h3>
+                <p>{recommendationDetails?.coveragePercentage?.toFixed(2) ?? "0.00"}%</p>
               </article>
             </div>
             <div className="chart-wrap">
@@ -728,7 +894,7 @@ function App() {
                   <YAxis stroke="#7f95bd" />
                   <Tooltip
                     formatter={(value, name) => [
-                      Number(value ?? 0).toFixed(4),
+                      formatCurrency(Number(value ?? 0), recommendationCurrency, 4),
                       name === "On-demand spend" ? "On-demand spend" : "Recommended Commitment",
                     ]}
                     labelFormatter={(value) => `Hour ${Number(value) + 1}`}
